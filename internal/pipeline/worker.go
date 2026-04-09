@@ -8,13 +8,13 @@ import (
 )
 
 
-func BlockWorkerSubscriber(ctx context.Context,workercount int,in <-chan *types.Header,handler func(blocs *types.Header))error{
+func BlockWorkerSubscriber(ctx context.Context,workercount int,in <-chan *types.Header,processor *BlockProcessor)error{
 	for i:=0;i<workercount; i++{
 		go func(id int){
 			for{
 				select{
 				case blocks:= <-in:
-					handler(blocks)
+					processor.ProcessBlock(ctx,blocks)
 				case <-ctx.Done():
 					log.Printf("Worker %d stopped\n", id)
                     return

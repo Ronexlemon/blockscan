@@ -24,6 +24,7 @@ func main(){
 	client := chain.NewchainConfig(wss,"celo")
 
 	blocklistener := chain.BlockListener{Client: client.Client}
+	processor := pipeline.BlockProcessor{Client: client.Client}
 	// logListener   := chain.LogListener{Client: client.Client}
 	// logChan := make(chan types.Log, 1000)
 	blockChan := make(chan *types.Header,1000)
@@ -43,9 +44,7 @@ func main(){
 	// 	  fmt.Println("Processing Log:", ev.TxHash.Hex())
 	// })
 
-	pipeline.BlockWorkerSubscriber(ctx,10,blockChan,func(ev *types.Header){
-		  fmt.Println("Processing Block:", ev.TxHash.Hex())
-	})
+	pipeline.BlockWorkerSubscriber(ctx,10,blockChan,&processor)
 
 	select {}
 
