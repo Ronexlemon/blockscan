@@ -1,52 +1,42 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
+    "context"
+    "fmt"
+    "log"
 
-	//"github.com/ethereum/go-ethereum"
-	//"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ronexlemon/blockscan/internal/chain"
-	"github.com/ronexlemon/blockscan/internal/pipeline"
+    "github.com/ethereum/go-ethereum/core/types"
+    "github.com/ronexlemon/blockscan/internal/chain"
+    "github.com/ronexlemon/blockscan/internal/pipeline"
 )
 
+func main() {
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
 
-func main(){
-	ctx,cancel := context.WithCancel(context.Background())
+    wss := "https://forno.celo.org"
+    fmt.Println("Starting to listen to blocks")
 
-	defer cancel()
+    client := chain.NewchainConfig(wss, "Celo")
+    if client == nil {
+        log.Fatal("[FATAL] failed to connect to chain")
+    }
 
-	wss:= "wss://forno.celo-sepolia.celo-testnet.org/ws"
-	fmt.Println("Staring to ;listen to blocks")
+    blocklistener := chain.BlockListener{Client: client.Client}
 
-	client := chain.NewchainConfig(wss,"celo")
+    processor := &pipeline.BlockProcessor{
+        Client:    client.Client,
+        RpcClient: client.RpcClient,
+        RpcURL:    wss,
+        Sem:       make(chan struct{}, 5), // max 5 concurrent RPC calls
+    }
 
-	blocklistener := chain.BlockListener{Client: client.Client}
-	processor := pipeline.BlockProcessor{Client: client.Client}
-	// logListener   := chain.LogListener{Client: client.Client}
-	// logChan := make(chan types.Log, 1000)
-	blockChan := make(chan *types.Header,1000)
-	// query := ethereum.FilterQuery{
-    //     Addresses: []common.Address{common.HexToAddress("0xYourContract")},
-    // }
+    blockChan := make(chan *types.Header, 1000)
 
-	// if err := logListener.SubscribeToLogs(ctx,query,logChan);err !=nil{
-	// 	log.Fatal(err)
-	// }
+    if err := blocklistener.SubscribeToBlocksPolling(ctx, blockChan); err != nil {
+        log.Fatal(err)
+    }
 
-	if err := blocklistener.SubscribeToBlocks(ctx,blockChan);err !=nil{
-		log.Fatal(err)
-	}
-
-	// pipeline.LogWorkerSubscriber(ctx,10,logChan,func(ev types.Log){
-	// 	  fmt.Println("Processing Log:", ev.TxHash.Hex())
-	// })
-
-	pipeline.BlockWorkerSubscriber(ctx,10,blockChan,&processor)
-
-	select {}
-
-
+    pipeline.BlockWorkerSubscriber(ctx, 10, blockChan, processor)
+    select {}
 }

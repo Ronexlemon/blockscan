@@ -2,7 +2,9 @@ package chain
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -70,4 +72,33 @@ func (l *LogListener) SubscribeToLogs(ctx context.Context,query ethereum.FilterQ
 
 	}()
 	return nil
+}
+
+func (b *BlockListener) SubscribeToBlocksPolling(ctx context.Context, ch chan<- *types.Header) error {
+    go func() {
+        var lastBlock uint64
+
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            default:
+            }
+
+            header, err := b.Client.HeaderByNumber(ctx, nil) // nil = latest
+            if err != nil {
+                fmt.Printf("[WARN] poll error: %v — retrying in 2s\n", err)
+                time.Sleep(2 * time.Second)
+                continue
+            }
+
+            if header.Number.Uint64() > lastBlock {
+                lastBlock = header.Number.Uint64()
+                ch <- header
+            }
+
+            //time.Sleep(2 * time.Second)
+        }
+    }()
+    return nil
 }
