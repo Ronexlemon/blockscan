@@ -67,6 +67,7 @@ type BlockResult struct {
 	BlockNumber uint64
 	EventLogs   []types.Log
 	MethodCalls []MethodCall
+	DecodedCalls []*DecodedCall
 	TotalTxs    int
 	SkippedTxs  int
 }
@@ -76,6 +77,7 @@ type BlockProcessor struct {
 	Client    *ethclient.Client
 	RpcClient *rpc.Client
 	RpcURL    string
+	OnResult   func(*BlockResult)
 	Sem       chan struct{} // caps concurrent RPC calls — init with make(chan struct{}, N)
 }
 
@@ -131,21 +133,32 @@ func (p *BlockProcessor) ProcessBlock(ctx context.Context, header *types.Header)
 	}
 
 	if len(result.EventLogs) > 0 || len(result.MethodCalls) > 0 {
-		fmt.Printf("[Block %d] events=%d calls=%d (txs=%d skipped=%d)\n",
-			result.BlockNumber,
-			len(result.EventLogs),
-			len(result.MethodCalls),
-			result.TotalTxs,
-			result.SkippedTxs,
-		)
+		// fmt.Printf("[Block %d] events=%d calls=%d (txs=%d skipped=%d)\n",
+		// 	result.BlockNumber,
+		// 	len(result.EventLogs),
+		// 	len(result.MethodCalls),
+		// 	result.TotalTxs,
+		// 	result.SkippedTxs,
+		// )
 		for _, call := range result.MethodCalls {
-			fmt.Printf("  [%s] from=%s to=%s\n", call.Name, call.From.Hex(), call.To.Hex())
+			//fmt.Printf("  [%s] from=%s to=%s\n", call.Name, call.From.Hex(), call.To.Hex())
+			decodelcall,err := DecodeMethodCall(call)
+
+			if err !=nil{
+				fmt.Printf("[WARN] decode tx %s: %v\n", call.TxHash.Hex()[:10], err)
+			continue
+			}
+			result.DecodedCalls = append(result.DecodedCalls, decodelcall)
+
 		}
+		if p.OnResult !=nil{
+				p.OnResult(result)
+			}
+
 	} else {
 		fmt.Printf("[Block %d] no ERC20 activity (txs=%d skipped=%d)\n",
 			result.BlockNumber, result.TotalTxs, result.SkippedTxs)
 	}
-
 	return result, nil
 }
 

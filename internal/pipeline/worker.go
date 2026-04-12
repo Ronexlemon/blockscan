@@ -3,9 +3,9 @@ package pipeline
 import (
 	"context"
 	"log"
-	
 
 	"github.com/ethereum/go-ethereum/core/types"
+	
 )
 
 
@@ -50,4 +50,5 @@ func LogWorkerSubscriber(ctx context.Context,workercount int,in <-chan types.Log
 	}
 	return nil
 }
+
 
