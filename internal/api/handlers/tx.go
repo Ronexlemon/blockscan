@@ -3,37 +3,100 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ronexlemon/blockscan/internal/storage"
 )
 
-type Transaction struct {
-	Hash   string `json:"hash"`
-	From   string `json:"from"`
-	To     string `json:"to"`
-	Amount int    `json:"amount"`
-}
-func LatestTxHandler(w http.ResponseWriter, r *http.Request) {
-	txs := []Transaction{
-		{
-			Hash:   "0xabc",
-			From:   "0x1223",
-			To:     "0x345555",
-			Amount: 4,
-		},
-	}
-	json.NewEncoder(w).Encode(txs)
+
+
+type Handler struct {
+	Repo *storage.Repository
 }
 
-func GetTransaction(w http.ResponseWriter, r *http.Request){
-	txhash := chi.URLParam(r,"hash")
+func NewHandler(repo *storage.Repository) *Handler {
+	return &Handler{Repo: repo}
+}
 
-	result:=Transaction{
-		Hash: txhash,
-		Amount: 10,
-		From: "0x1234566666666666699999283476455464746745655",
-		To: "0x5459dfr738675835474562385689497692135326646",
-	}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
 }
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func (h *Handler) LatestTxHandler(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+
+	result, err := h.Repo.GetLatestTransactions(r.Context(), storage.Pagination{
+		Page:    page,
+		PerPage: perPage,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) TransactionsByBlock(w http.ResponseWriter, r *http.Request) {
+	blockStr := chi.URLParam(r, "number")
+	if blockStr == "" {
+		writeError(w, http.StatusBadRequest, "block number is required")
+		return
+	}
+
+	blockNumber, err := strconv.ParseUint(blockStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid block number")
+		return
+	}
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+
+	result, err := h.Repo.GetBlockTransactionsPaginated(r.Context(), blockNumber, storage.Pagination{
+		Page:    page,
+		PerPage: perPage,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+
+
+
+
+func (h *Handler) GetAddressTransactions(w http.ResponseWriter, r *http.Request) {
+	address := chi.URLParam(r, "address")
+	if address == "" {
+		writeError(w, http.StatusBadRequest, "address is required")
+		return
+	}
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+
+	result, err := h.Repo.GetTransactionsByAddress(r.Context(), address, storage.Pagination{
+		Page:    page,
+		PerPage: perPage,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+

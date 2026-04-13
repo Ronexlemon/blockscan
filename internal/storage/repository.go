@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 type Repository struct{
@@ -366,7 +368,7 @@ func (r *Repository) GetTransactionsByAddress(ctx context.Context, address strin
 	var total int
 	err := r.Db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM decoded_calls
-		WHERE from = $1 OR to = $1 OR caller_addr = $1
+		WHERE from_addr = $1 OR to_addr = $1 OR caller_addr = $1
 	`, address).Scan(&total)
 	if err != nil {
 		return nil, fmt.Errorf("count address txs: %w", err)
@@ -408,16 +410,21 @@ func scanDecodedCalls(rows interface{Scan(...any) error;Next() bool; Err() error
 		var c DecodedCallRecord
 		var amount string
 		var createdAt time.Time
+		var txHashStr string
+		var contractAddr string
+		var callerAddress string
+		var from string
+		var to string
 
 		err := rows.Scan(
 			&c.ID,
 			&c.BlockNumber,
-			&c.TxHash,
+			&txHashStr,
 			&c.Method,
-			&c.CallerAddr,
-			&c.ContractAddr,
-			&c.From,
-			&c.To,
+			&callerAddress,
+			&contractAddr,
+			&from,
+			&to,
 			&amount,
 			&c.TxType,
 			&createdAt,
@@ -427,6 +434,11 @@ func scanDecodedCalls(rows interface{Scan(...any) error;Next() bool; Err() error
 			return nil,fmt.Errorf("scan decoded call: %w",err)
 		}
 		c.Amount = *parseBigInt(amount)
+		c.TxHash = common.HexToHash(txHashStr)
+		c.ContractAddr = common.HexToAddress(contractAddr)
+		c.From = common.HexToAddress(from)
+		c.To = common.HexToAddress(to)
+		c.CallerAddr = common.HexToAddress(callerAddress)
 		results = append(results, c)
 	}
 	return results,rows.Err()
