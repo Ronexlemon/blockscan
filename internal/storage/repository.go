@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 type Repository struct{
@@ -19,6 +21,36 @@ type DbRepository interface{
 	GetLastProcessedBlock(ctx context.Context)(uint64,error)
 	IsBlockProcessed(ctx context.Context,blockNumber uint64)(bool,error)
 }
+
+type Pagination struct{
+	Page int
+	PerPage int
+}
+
+func (p *Pagination) normalize(){
+	if p.Page < 1{
+		p.Page =1
+	}
+	if p.PerPage < 20{
+		p.PerPage =20
+	}
+	if p.PerPage >100{
+		p.PerPage =100
+	}
+}
+
+func (p *Pagination) offset()int{
+	return (p.Page -1)* p.PerPage
+}
+
+type PaginatedResult[T any] struct{
+	Data  []T
+	Total int
+	Page  int
+	PerPage int
+	TotalPages int
+}
+
 
 
 func (r *Repository) Migrate() error{
@@ -161,4 +193,292 @@ func (r *Repository) SaveDecodedCallBatch(ctx context.Context, calls []*DecodedC
 	}
 
 	return tx.Commit()
+}
+
+
+//reads
+
+func (r *Repository) GetLatestBlock(ctx context.Context)(*BlockRecord,error){
+	query:= `SELECT id,block_number,total_txs,skipped_txs,event_count,call_count,processed_at
+	         FROM blocks
+			 ORDER BY block_number DESC
+			 LIMIT 1`
+	row := r.Db.QueryRowContext(ctx,query)
+	var b BlockRecord
+	err:= row.Scan(
+		&b.ID,
+		&b.BlockNumber,
+		&b.TotalTxs,
+		&b.SkippedTxs,
+		&b.EventCount,
+		&b.CallCount,
+		&b.ProcessedAt,
+	)
+
+	if err !=nil{
+		return nil,fmt.Errorf("get latest block: %w",err)
+	}
+	return &b,nil
+}
+
+func (r *Repository) GetBlockByNumber(ctx context.Context,blockNumber uint64)(*BlockRecord,error){
+	query:= `SELECT id,block_number,total_txs,skipped_txs,event_count,call_count,processed_at
+	         FROM blocks
+			 WHERE block_number = $1`
+	row:= r.Db.QueryRowContext(ctx,query,blockNumber)
+
+	var b BlockRecord
+
+	err := row.Scan(
+		&b.ID,
+		&b.BlockNumber,
+		&b.TotalTxs,
+		&b.SkippedTxs,
+		&b.EventCount,
+		&b.CallCount,
+		&b.ProcessedAt,
+	)
+	if err !=nil{
+		return nil, fmt.Errorf("get block %d: %w",blockNumber,err)
+
+	}
+	return &b,nil
+}
+
+func (r *Repository) GetTransactionsByBlock(ctx context.Context,blockNumber uint64)([]DecodedCallRecord,error){
+	query:= `SELECT id,block_number,tx_hash,method,caller_addr,contract_addr,from_addr,to_addr,amount,tx_type,created_at
+	         FROM decoded_calls
+			 WHERE block_number =$1
+			 ORDER BY id ASC`
+	rows,err := r.Db.QueryContext(ctx,query,blockNumber)
+	if err !=nil{
+		return nil,fmt.Errorf("get txs by block %d: %w",blockNumber,err)
+
+	}
+	defer rows.Close()
+	return scanDecodedCalls(rows)
+}
+
+func (r *Repository) GetLatestTransactions(ctx context.Context,p Pagination)(*PaginatedResult[DecodedCallRecord],error){
+p.normalize()
+
+var total int
+
+err := r.Db.QueryRowContext(ctx,`SELECT COUNT(*) FROM decoded_calls`).Scan(&total)
+if err !=nil{
+	return nil,fmt.Errorf("count transactions: %w",err)
+}
+query:= `SELECT id, block_number,tx_hash,method,caller_addr,contract_addr,from_addr,to_addr,amount,tx_type,created_at
+         FROM decoded_calls
+		 ORDER BY block_number DESC,id DESC
+		 LIMIT $1 OFFSET $2`
+rows,err := r.Db.QueryContext(ctx,query,p.PerPage,p.offset())
+if err !=nil{
+	return nil,fmt.Errorf("get latest transactions")
+}
+defer rows.Close()
+data, err := scanDecodedCalls(rows)
+if err !=nil{
+	return nil,err
+}
+return &PaginatedResult[DecodedCallRecord]{
+	Data: data,
+	Total: total,
+	Page: p.Page,
+	PerPage: p.PerPage,
+	TotalPages: totalPages(total,p.PerPage),
+},nil
+}
+
+func (r *Repository) GetLatestBlocks(ctx context.Context, p Pagination) (*PaginatedResult[BlockRecord], error) {
+	p.normalize()
+
+	var total int
+	err := r.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM blocks`).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count blocks: %w", err)
+	}
+
+	rows, err := r.Db.QueryContext(ctx, `
+		SELECT id, block_number, total_txs, skipped_txs, event_count, call_count, processed_at
+		FROM blocks
+		ORDER BY block_number DESC
+		LIMIT $1 OFFSET $2
+	`, p.PerPage, p.offset())
+	if err != nil {
+		return nil, fmt.Errorf("get latest blocks: %w", err)
+	}
+	defer rows.Close()
+
+	data, err := scanBlocks(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PaginatedResult[BlockRecord]{
+		Data:       data,
+		Total:      total,
+		Page:       p.Page,
+		PerPage:    p.PerPage,
+		TotalPages: totalPages(total, p.PerPage),
+	}, nil
+}
+
+func (r *Repository) GetBlockTransactionsPaginated(ctx context.Context, blockNumber uint64, p Pagination) (*PaginatedResult[DecodedCallRecord], error) {
+	p.normalize()
+
+	var total int
+	err := r.Db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM decoded_calls WHERE block_number = $1`, blockNumber,
+	).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count block txs: %w", err)
+	}
+
+	rows, err := r.Db.QueryContext(ctx, `
+		SELECT id, block_number, tx_hash, method, caller_addr, contract_addr,
+		       from_addr, to_addr, amount, tx_type, created_at
+		FROM decoded_calls
+		WHERE block_number = $1
+		ORDER BY id ASC
+		LIMIT $2 OFFSET $3
+	`, blockNumber, p.PerPage, p.offset())
+	if err != nil {
+		return nil, fmt.Errorf("get block txs paginated: %w", err)
+	}
+	defer rows.Close()
+
+	data, err := scanDecodedCalls(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PaginatedResult[DecodedCallRecord]{
+		Data:       data,
+		Total:      total,
+		Page:       p.Page,
+		PerPage:    p.PerPage,
+		TotalPages: totalPages(total, p.PerPage),
+	}, nil
+}
+
+func (r *Repository) GetTransactionsByAddress(ctx context.Context, address string, p Pagination) (*PaginatedResult[DecodedCallRecord], error) {
+	p.normalize()
+
+	var total int
+	err := r.Db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM decoded_calls
+		WHERE from_addr = $1 OR to_addr = $1 OR caller_addr = $1
+	`, address).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count address txs: %w", err)
+	}
+
+	rows, err := r.Db.QueryContext(ctx, `
+		SELECT id, block_number, tx_hash, method, caller_addr, contract_addr,
+		       from_addr, to_addr, amount, tx_type, created_at
+		FROM decoded_calls
+		WHERE from_addr = $1 OR to_addr = $1 OR caller_addr = $1
+		ORDER BY block_number DESC
+		LIMIT $2 OFFSET $3
+	`, address, p.PerPage, p.offset())
+	if err != nil {
+		return nil, fmt.Errorf("get address txs: %w", err)
+	}
+	defer rows.Close()
+
+	data, err := scanDecodedCalls(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PaginatedResult[DecodedCallRecord]{
+		Data:       data,
+		Total:      total,
+		Page:       p.Page,
+		PerPage:    p.PerPage,
+		TotalPages: totalPages(total, p.PerPage),
+	}, nil
+}
+
+//helpers
+
+func scanDecodedCalls(rows interface{Scan(...any) error;Next() bool; Err() error})([]DecodedCallRecord,error){
+	var results []DecodedCallRecord
+
+	for rows.Next(){
+		var c DecodedCallRecord
+		var amount string
+		var createdAt time.Time
+		var txHashStr string
+		var contractAddr string
+		var callerAddress string
+		var from string
+		var to string
+
+		err := rows.Scan(
+			&c.ID,
+			&c.BlockNumber,
+			&txHashStr,
+			&c.Method,
+			&callerAddress,
+			&contractAddr,
+			&from,
+			&to,
+			&amount,
+			&c.TxType,
+			&createdAt,
+
+		)
+		if err !=nil{
+			return nil,fmt.Errorf("scan decoded call: %w",err)
+		}
+		c.Amount = *parseBigInt(amount)
+		c.TxHash = common.HexToHash(txHashStr)
+		c.ContractAddr = common.HexToAddress(contractAddr)
+		c.From = common.HexToAddress(from)
+		c.To = common.HexToAddress(to)
+		c.CallerAddr = common.HexToAddress(callerAddress)
+		results = append(results, c)
+	}
+	return results,rows.Err()
+}
+
+func scanBlocks(rows interface{Scan(...any) error;Next() bool;Err() error})([]BlockRecord,error){
+	var results []BlockRecord
+
+	for rows.Next(){
+		var b BlockRecord
+		err:= rows.Scan(
+			&b.ID,
+			&b.BlockNumber,
+			&b.TotalTxs,
+			&b.SkippedTxs,
+			&b.EventCount,
+			&b.CallCount,
+			&b.ProcessedAt,
+		)
+		if err !=nil{
+			return nil,fmt.Errorf("scan block %w",err)
+		}
+		results = append(results, b)
+	}
+	return results,rows.Err()
+}
+
+func totalPages(total, perPage int)int{
+	if perPage == 0{
+		return 0
+	}
+	pages := total /perPage
+	if total % perPage ==0{
+		pages++
+	}
+	return pages
+}
+
+func parseBigInt(s string) *big.Int{
+	n:= new(big.Int)
+	n.SetString(s, 10)
+	return n
 }
