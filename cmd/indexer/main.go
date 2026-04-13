@@ -59,5 +59,6 @@ func main() {
 
     pipeline.BlockWorkerSubscriber(ctx, 10, blockChan, processor)
     storage.StartDbWorker(ctx,resultChan,repo,5)
+    storage.StartRetentionWorker(ctx,&repo)
     select {}
 }

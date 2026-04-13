@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math/big"
 	"time"
 
@@ -400,6 +401,56 @@ func (r *Repository) GetTransactionsByAddress(ctx context.Context, address strin
 		TotalPages: totalPages(total, p.PerPage),
 	}, nil
 }
+
+
+func(r *Repository) RunRetention(ctx context.Context,maxBlocks int)error{
+	var total int
+	err:= r.Db.QueryRowContext(ctx,`SELECT COUNT(*) FROM blocks`).Scan(&total)
+
+	if err !=nil{
+		return fmt.Errorf("count blocks: %w",err)
+	}
+	if total <= maxBlocks{
+		log.Printf("[Rentetion] %d blocks indexed, under limit (%d) nothing to delete\n",total,maxBlocks)
+		return nil
+	}
+
+	excess:= total - maxBlocks
+
+	var cutOffBlock uint64
+	err = r.Db.QueryRowContext(ctx,`SELECT block_number FROM blocks ORDER BY block_number ASC LIMIT 1 OFFSET $1`,excess).Scan(&cutOffBlock)
+
+	if err !=nil{
+		return fmt.Errorf("find cutoff block: %w",err)
+	}
+
+	tx,err := r.Db.BeginTx(ctx,nil)
+
+	if err !=nil{
+		return fmt.Errorf("begin tx: %w",err)
+	}
+	defer tx.Rollback()
+
+	callRes,err := tx.ExecContext(ctx,`DELETE FROM decoded_calls WHERE block_number < $1`,cutOffBlock)
+
+	if err !=nil{
+		return fmt.Errorf("delete calls: %w",err)
+	}
+
+	blockRes,err := tx.ExecContext(ctx,`DELETE FROM blocks WHERE block_number < $1`,cutOffBlock)
+	if err !=nil{
+		return fmt.Errorf("delete blocks: %w",err)
+	}
+
+	deletedCalls,_:= callRes.RowsAffected()
+	deletedBlocks,_:= blockRes.RowsAffected()
+
+	log.Printf("[Retention] deleted: blocks=%d calls=%d  (cutoff block=%d)\n",
+		deletedBlocks, deletedCalls,  cutOffBlock)
+	return nil
+
+}
+
 
 //helpers
 
