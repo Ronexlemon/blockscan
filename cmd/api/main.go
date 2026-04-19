@@ -10,6 +10,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/ronexlemon/blockscan/internal/api"
+	"github.com/ronexlemon/blockscan/internal/broadcast"
 	"github.com/ronexlemon/blockscan/internal/storage"
 )
 
@@ -22,10 +23,14 @@ func main() {
 
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
-
+   
     db := storage.NewDataBaseConnection()
     repo := storage.Repository{Db: db.DB}
-    router := api.NewRouter(&repo)
+    hub:= api.NewSSEHub()
+    go hub.Run()
+     publisher := broadcast.NewPublisher()
+     publisher.StartSubscriber(ctx,hub)
+    router := api.NewRouter(&repo,hub)
 
     server := &http.Server{
         Addr:    ":8080",

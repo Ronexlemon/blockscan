@@ -6,11 +6,12 @@ import (
 	"log"
 
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/joho/godotenv"
+	//"github.com/ronexlemon/blockscan/internal/api"
+	"github.com/ronexlemon/blockscan/internal/broadcast"
 	"github.com/ronexlemon/blockscan/internal/chain"
 	"github.com/ronexlemon/blockscan/internal/pipeline"
 	"github.com/ronexlemon/blockscan/internal/storage"
-     "github.com/joho/godotenv"
-
 )
 
 func main() {
@@ -25,6 +26,9 @@ func main() {
      if err := repo.Migrate(); err != nil {
 		log.Fatalf("[FATAL] migrate: %v", err)
 	}
+    // hub:= api.NewSSEHub()
+    publisher := broadcast.NewPublisher()
+    //go hub.Run()
     wss := "https://forno.celo.org"
     fmt.Println("Starting to listen to blocks")
 
@@ -47,6 +51,14 @@ func main() {
             default:
                 fmt.Printf("[WARN] result channel full, dropping block %d\n",
                 result.BlockNumber)
+            }
+            publisher.Publish(ctx,"block",map[string]any{
+                "block_number": result.BlockNumber,
+                "total_txs":result.TotalTxs,
+                "call_count":len(result.MethodCalls),
+            })
+            for _,decoded := range result.DecodedCalls{
+                publisher.Publish(ctx,"transaction",decoded)
             }
         },
     }

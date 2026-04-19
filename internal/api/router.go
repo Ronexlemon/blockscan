@@ -9,7 +9,7 @@ import (
 )
 
 
-func NewRouter(repo *storage.Repository)http.Handler{
+func NewRouter(repo *storage.Repository,hub *SSEHub)http.Handler{
 	r :=chi.NewRouter()
     h:= handlers.NewHandler(repo)
 	r.Get("/health",handlers.HealthHandler)
@@ -23,6 +23,7 @@ func NewRouter(repo *storage.Repository)http.Handler{
 		r.Get("/",h.LatestTxHandler)
 		r.Get("/{address}", h.GetAddressTransactions)
 	})
+	r.Get("/stream",hub.ServeHTTP)
 	return r
 
 }

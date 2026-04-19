@@ -19,6 +19,13 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: always
+
   api:
     build:
       context: ..
@@ -34,6 +41,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: blockscan
+      REDIS_URL: redis:6379
 
   indexer:
     build:
@@ -50,6 +58,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: blockscan
+      REDIS_URL: redis:6379
 
 volumes:
   pgdata:

@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"encoding/json"
@@ -63,6 +63,14 @@ func (h *SSEHub) Run(){
 	}
 }
 
+func (h *SSEHub) BroadcastRaw(msg []byte){
+	select{
+	case h.broadcast <-msg:
+	default:
+		log.Println("broadcast channel full,dropping")
+	}
+}
+
 //Event types
 
 type SSEEvent struct{
@@ -85,39 +93,41 @@ func (h *SSEHub) Publish(eventType string,data any){
 }
 
 //Stream
-func (h *SSEHub) ServerHttp(w http.ResponseWriter, r *http.Request){
-	 flusher,ok:=w.(http.Flusher)
-	 if !ok{
-		http.Error(w,"stream not supported",http.StatusInternalServerError)
-		return
-	 }
-	 w.Header().Set("Content-Type","text/event-stream")
-	 w.Header().Set("Cache-Control","no-cache")
-	 w.Header().Set("Connection","keep-alive")
-	 w.Header().Set("Access-Control-Allow-Origin","*")
+func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    flusher, ok := w.(http.Flusher)
+    if !ok {
+        http.Error(w, "stream not supported", http.StatusInternalServerError)
+        return
+    }
 
-	 client := &Client{
-		id: r.RemoteAddr,
-		channel: make(chan []byte,64),
+    w.Header().Set("Content-Type", "text/event-stream")
+    w.Header().Set("Cache-Control", "no-cache")
+    w.Header().Set("Connection", "keep-alive")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	 }
-	 h.register <- client
+    flusher.Flush()
 
-	 defer func(){
-		h.unregister <- client
-	 }()
+    client := &Client{
+        id:      r.RemoteAddr,
+        channel: make(chan []byte, 64),
+    }
+    h.register <- client
+    defer func() {
+        h.unregister <- client
+    }()
+    fmt.Fprintf(w, "data: {\"type\":\"connected\"}\n\n")
+    flusher.Flush()
 
-	 for {
-		select{
-		case msg,ok:= <-client.channel:
-			if !ok{
-				return
-			}
-			fmt.Fprintf(w,"data: %s\n\n",msg)
-			flusher.Flush()
-		case <-r.Context().Done():
-			return
-		}
-	 }
-	 
+    for {
+        select {
+        case msg, ok := <-client.channel:
+            if !ok {
+                return
+            }
+            fmt.Fprintf(w, "data: %s\n\n", msg)
+            flusher.Flush()
+        case <-r.Context().Done():
+            return
+        }
+    }
 }
