@@ -23,7 +23,7 @@ func NewRouter(repo *storage.Repository,hub *SSEHub)http.Handler{
 		r.Get("/",h.LatestTxHandler)
 		r.Get("/{address}", h.GetAddressTransactions)
 	})
-	r.Get("/stream",hub.ServeHTTP)
+	r.Get("/data-stream",hub.ServeHTTP)
 	return r
 
 }
