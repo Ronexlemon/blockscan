@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -14,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ronexlemon/blockscan/internal/metric"
 )
 
 var (
@@ -84,6 +86,7 @@ type BlockProcessor struct {
 
 
 func (p *BlockProcessor) ProcessBlock(ctx context.Context, header *types.Header) (*BlockResult, error) {
+	start := time.Now()
 	result := &BlockResult{BlockNumber: header.Number.Uint64()}
 
 	if ctx.Err() != nil {
@@ -159,6 +162,8 @@ func (p *BlockProcessor) ProcessBlock(ctx context.Context, header *types.Header)
 		fmt.Printf("[Block %d] no ERC20 activity (txs=%d skipped=%d)\n",
 			result.BlockNumber, result.TotalTxs, result.SkippedTxs)
 	}
+	metric.BlocksProcessed.Inc()
+    metric.BlockProcessDuration.Observe(time.Since(start).Seconds())
 	return result, nil
 }
 
@@ -250,6 +255,7 @@ func (p *BlockProcessor) fetchMethodCalls(ctx context.Context, blockNum *big.Int
 	}
 
 	total := len(hashes)
+	metric.TxTotal.Add(float64(total))     
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var results []MethodCall
@@ -274,7 +280,8 @@ func (p *BlockProcessor) fetchMethodCalls(ctx context.Context, blockNum *big.Int
 			if systemAddresses[*tx.To] || systemAddresses[tx.From] {
 				mu.Lock()
 				skipped++
-				mu.Unlock()
+				mu.Unlock() 
+				metric.TxSkipped.Inc()
 				return
 			}
 
@@ -286,6 +293,7 @@ func (p *BlockProcessor) fetchMethodCalls(ctx context.Context, blockNum *big.Int
 				mu.Lock()
 				skipped++
 				mu.Unlock()
+				metric.TxSkipped.Inc()
 				return
 			}
 
@@ -293,7 +301,7 @@ func (p *BlockProcessor) fetchMethodCalls(ctx context.Context, blockNum *big.Int
 			if !known {
 				return
 			}
-
+           metric.MethodCallsFound.WithLabelValues(name).Inc()        
 			mu.Lock()
 			results = append(results, MethodCall{
 				TxHash:   tx.Hash,
@@ -334,12 +342,15 @@ func (p *BlockProcessor) fetchTxHashes(ctx context.Context, blockNum *big.Int) (
 func (p *BlockProcessor) fetchRawTx(ctx context.Context, hash common.Hash) (*rawTx, error) {
 	p.Sem <- struct{}{}
 	defer func() { <-p.Sem }()
+	start := time.Now()
 
 	var result json.RawMessage
 	err := p.RpcClient.CallContext(ctx, &result, "eth_getTransactionByHash", hash)
 	if err != nil {
 		return nil, err
 	}
+	metric.RPCCalls.WithLabelValues("eth_getTransactionByHash", "ok").Inc()
+    metric.RPCDuration.WithLabelValues("eth_getTransactionByHash").Observe(time.Since(start).Seconds())
 	if result == nil || string(result) == "null" {
 		return nil, fmt.Errorf("tx not found")
 	}
