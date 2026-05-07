@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/ronexlemon/blockscan/internal/api/handlers"
 	"github.com/ronexlemon/blockscan/internal/storage"
 )
@@ -24,6 +25,7 @@ func NewRouter(repo *storage.Repository,hub *SSEHub)http.Handler{
 		r.Get("/{address}", h.GetAddressTransactions)
 	})
 	r.Get("/data-stream",hub.ServeHTTP)
+	r.Handle("/metrics", promhttp.Handler())
 	return r
 
 }

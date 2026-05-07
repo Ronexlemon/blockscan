@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/joho/godotenv"
+
 	//"github.com/ronexlemon/blockscan/internal/api"
 	"github.com/ronexlemon/blockscan/internal/broadcast"
 	"github.com/ronexlemon/blockscan/internal/chain"
+	"github.com/ronexlemon/blockscan/internal/indexer"
 	"github.com/ronexlemon/blockscan/internal/pipeline"
 	"github.com/ronexlemon/blockscan/internal/storage"
 )
@@ -20,7 +24,19 @@ func main() {
         log.Println("[WARN] no .env file found, using system env")
     }
     ctx, cancel := context.WithCancel(context.Background())
+
     defer cancel()
+        router := indexer.NewIndexerRouter()
+     server := &http.Server{
+        Addr:    ":8081",
+        Handler: router,
+    }
+    go func() {
+        log.Println("Indexer HTTP listening on :8081")
+        if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+            log.Fatalf("[FATAL] server: %v", err)
+        }
+    }()
      db := storage.NewDataBaseConnection()
      repo := storage.Repository{Db: db.DB}
      if err := repo.Migrate(); err != nil {
@@ -72,5 +88,6 @@ func main() {
     pipeline.BlockWorkerSubscriber(ctx, 10, blockChan, processor)
     storage.StartDbWorker(ctx,resultChan,repo,5)
     storage.StartRetentionWorker(ctx,&repo)
+    
     select {}
 }
