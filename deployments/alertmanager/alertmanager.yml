@@ -1,0 +1,14 @@
+global:
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'csin45159@gmail.com'
+  smtp_auth_username: 'csin45159@gmail.com'
+  smtp_auth_password: 'xxxxxxxxxxxxxxxxx'
+  smtp_require_tls: true
+
+route:
+  receiver: 'gmail-alert'
+
+receivers:
+  - name: 'gmail-alert'
+    email_configs:
+      - to: 'csin45159@gmail.com'

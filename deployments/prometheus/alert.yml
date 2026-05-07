@@ -1,0 +1,11 @@
+groups:
+  - name: pipeline_alerts
+    rules:
+      - alert: TransactionsDivisibleByFive
+        expr: pipeline_transactions_total % 5 == 0
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Transaction count divisible by 5"
+          description: "pipeline_transactions_total reached {{ $value }}"
